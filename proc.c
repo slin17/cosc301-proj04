@@ -551,6 +551,9 @@ int join(int pid)
 		break;
 	}
   }
+  if (pid == -1) {//if pid = -1, we don't want to return -1, so have to increment locate_p
+	locate_p++; 
+  }
   if (locate_p == 0) {
 	return -1;
   }
@@ -562,7 +565,7 @@ int join(int pid)
       if(p->parent != proc || p->isthread != 1)
         continue;
       havekids = 1;
-      if(p->state == ZOMBIE || p->pid == pid){//also, if p->pid matches the input "pid" 
+      if(p->state == ZOMBIE){
         // Found one.
         p_pid = p->pid;
         kfree(p->kstack);
