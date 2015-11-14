@@ -12,6 +12,7 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+struct spinlock threadlock;
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -109,7 +110,7 @@ int
 growproc(int n)
 {
   uint sz;
-  
+  acquire(&threadlock);
   sz = proc->sz;
   if(n > 0){
     if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
@@ -119,6 +120,34 @@ growproc(int n)
       return -1;
   }
   proc->sz = sz;
+  //change address space for parent process or child threads
+  acquire(&ptable.lock);
+  struct proc *p;
+  if (proc->isthread == 1)
+  {
+	proc->parent->sz = proc->sz;
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+	{
+		if (p->parent == proc->parent)
+		{
+			p->sz = proc->sz;
+		}
+	}
+  }
+  else 	
+  {
+	
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+	{
+		if (p->parent == proc)
+		{
+			p->sz = proc->sz;
+		}	
+	}
+	
+  }
+  release(&ptable.lock);
+  release(&threadlock);
   switchuvm(proc);
   return 0;
 }
@@ -217,15 +246,21 @@ exit(void)
 int
 wait(void)
 {
-  struct proc *p;
-  int havekids, pid;
+  struct proc *p, *par;
+  int havekids, pid, zomb, child;
+
+  if (proc->isthread == 1) {//check it's waiting on a thread
+	return -1; 
+  }
 
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for zombie children.
     havekids = 0;
+    zomb = 0;
+    child = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != proc)
+      if(p->parent != proc) //|| p->isthread == 1)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
@@ -242,8 +277,41 @@ wait(void)
         release(&ptable.lock);
         return pid;
       }
+      if (p->isthread == 1) {//find a thread 
+	if (p->state == ZOMBIE && p->parent->isthread == 0) {//check if it's ZOMBIE or if it exited and if its parent is a thread or not 
+	    par = p->parent; //record its parent
+	    zomb++; //increment zomb counter
+	    break;
+	}
+	else {continue;}
+      }
     }
-
+    
+    if (zomb != 0) {//if zomb counter != 0
+	child = 1; //increment child to keep track of child threads of "par"
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+	   if (p->isthread == 1 && p->parent == par){//if it's a thread and child of "par" 
+		child++;
+		if (p->state == ZOMBIE){//if the thread exited
+			zomb++;  
+		}
+	   }
+	}
+	if (zomb == child) {//which means all the child threads of "par" exited, then free the addr space of "par"
+		pid = par->pid;
+        	kfree(par->kstack);
+        	par->kstack = 0;
+        	freevm(par->pgdir);
+        	par->state = UNUSED;
+        	par->pid = 0;
+        	par->parent = 0;
+        	par->name[0] = 0;
+        	par->killed = 0;
+        	release(&ptable.lock);
+        	return pid;
+	} 
+    }
+    
     // No point waiting if we don't have any children.
     if(!havekids || proc->killed){
       release(&ptable.lock);
