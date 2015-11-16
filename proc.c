@@ -12,7 +12,8 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
-struct spinlock threadlock;
+
+  struct spinlock threadlock;
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -25,7 +26,9 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&threadlock, "thread");
 }
+
 
 //PAGEBREAK: 32
 // Look in the process table for an UNUSED proc.
@@ -96,11 +99,12 @@ userinit(void)
   p->tf->eflags = FL_IF;
   p->tf->esp = PGSIZE;
   p->tf->eip = 0;  // beginning of initcode.S
-
+  p->isthread=0;
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  // set initial process to be not a thread
   p->isthread = 0;
 }
 
@@ -110,6 +114,7 @@ int
 growproc(int n)
 {
   uint sz;
+  
   acquire(&threadlock);
   sz = proc->sz;
   if(n > 0){
@@ -120,32 +125,42 @@ growproc(int n)
       return -1;
   }
   proc->sz = sz;
-  //change address space for parent process or child threads
+  
+
+
+
+  //change sz for parent or child threads
   acquire(&ptable.lock);
   struct proc *p;
-  if (proc->isthread == 1)
+  //if thead changes sz, change it for parent and other children
+  if (proc->isthread ==1)
   {
-	proc->parent->sz = proc->sz;
+	proc->parent->sz=proc->sz;
 	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
 	{
-		if (p->parent == proc->parent)
+		if (p->parent==proc && p->isthread ==1)
 		{
-			p->sz = proc->sz;
+			p->sz=proc->sz;
 		}
 	}
   }
+  //if parent changes sz, just change sz for children
   else 	
   {
 	
-	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-	{
-		if (p->parent == proc)
+		for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
 		{
-			p->sz = proc->sz;
-		}	
-	}
+			if (p->parent==proc && p->isthread ==1)
+			{
+				p->sz=proc->sz;
+			}	
+		}
 	
   }
+
+
+
+
   release(&ptable.lock);
   release(&threadlock);
   switchuvm(proc);
@@ -187,6 +202,7 @@ fork(void)
   safestrcpy(np->name, proc->name, sizeof(proc->name));
  
   pid = np->pid;
+  //make sure that processes are not threads
   np->isthread = 0;
   // lock to force the compiler to emit the np->state write last.
   acquire(&ptable.lock);
@@ -204,6 +220,27 @@ exit(void)
 {
   struct proc *p;
   int fd;
+
+  //kill all children for a process to end
+  if (proc->isthread!=1)
+  {
+  //acquire(&ptable.lock);
+  	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+ 	 {
+  		  if(p->parent == proc && p->isthread==1)
+		  {
+  		    p->killed = 1;
+	  	    // Wake process from sleep if necessary.
+	  	    if(p->state == SLEEPING)
+	  	      {p->state = RUNNABLE;}
+	            join(p->pid);
+	  	    //release(&ptable.lock);
+	  	    
+	  	  }
+	      //release(&ptable.lock);
+	  }
+  }
+  
 
   if(proc == initproc)
     panic("init exiting");
@@ -226,12 +263,17 @@ exit(void)
   // Parent might be sleeping in wait().
   wakeup1(proc->parent);
 
+  
+
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->parent == proc){
+ 
+      
       p->parent = initproc;
       if(p->state == ZOMBIE)
         wakeup1(initproc);
+
     }
   }
 
@@ -322,7 +364,6 @@ wait(void)
     sleep(proc, &ptable.lock);  //DOC: wait-sleep
   }
 }
-
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -543,10 +584,13 @@ clone(int fcn, int arg, int stack)
 {
   int i, pid;
   struct proc *np;
-
   // Allocate process.
   if((np = allocproc()) == 0)
     return -1;
+  //check if stack is one page sized and page aligned
+
+  if ((stack% PGSIZE)!=0 ||fcn ==0||stack==0)
+	return -1;
   /*
   // Copy process state from p.
   if((np->pgdir = copyuvm(proc->pgdir, proc->sz)) == 0){
@@ -556,6 +600,7 @@ clone(int fcn, int arg, int stack)
     return -1;
   }
   */
+  //initialize thread
   np->pgdir = proc->pgdir;
   np->sz = proc->sz;
   np->parent = proc;
@@ -636,9 +681,10 @@ int join(int pid)
       if(p->state == ZOMBIE){
         // Found one.
         p_pid = p->pid;
-        kfree(p->kstack);
+        //do not free addr space since it is called by a thread
+        //kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        //freevm(p->pgdir);
         p->state = UNUSED;
         p->pid = 0;
         p->parent = 0;
