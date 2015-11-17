@@ -28,27 +28,27 @@ int sem_init2 (int index, int max_val) {
 	return 0;  
 }
 
-int sem_wait (int index, int c) {
+int sem_wait (int index, int val) {
 	if (index < 0 || index > 32) {//check if it's within range of the semaphore array
 		return -1;
 	}
 	acquire(&sem[index].lock);
-	while(sem[index].value <= (c-1)){//semaphore not available (value less than c) 
+	while(sem[index].value <= (val-1)){//semaphore not available (value less than c) 
 		sleep(&sem[index], &sem[index].lock); 
 	}
 	//enters critical section
-	sem[index].value -= c;
+	sem[index].value -= val;
 	release(&sem[index].lock);
 	return 0;
 }
 
-int sem_signal (int index, int count) {
-	if (index < 0 || index > NSEMS) {//check if it's within range of the semaphore array
+int sem_signal (int index, int val) {
+	if (index < 0 || index > 32) {//check if it's within range of the semaphore array
 		return -1;
 	}
 	acquire(&sem[index].lock);
 	//enters critical section
-	sem[index].value += count;
+	sem[index].value += val;
 	if (sem[index].value > 0) { //if lock is available, wakeup semaphore 
 		wakeup(&sem[index]);
 	}
