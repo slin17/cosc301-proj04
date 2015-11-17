@@ -3,7 +3,6 @@
 #include "param.h"
 #include "x86.h"
 #include "spinlock.h"
-#define NSEMS 32 //number of entries for array of semaphores
 
 typedef struct semaphore_t {
    int value;
@@ -13,32 +12,32 @@ typedef struct semaphore_t {
 t_sem sem[32]; 
 
 void sem_init1 (void) {
-	for (int i=0; i<NSEMS ; i++) {
+	for (int i=0; i<32 ; i++) {
 		initlock(&sem[i].lock, "semaphore");
 		sem[i].value = 0; 
 	}
 }
 
-int sem_init2 (int index, int max) {
-	if (index < 0 || index > NSEMS) {//check if it's within range of the semaphore array
+int sem_init2 (int index, int max_val) {
+	if (index < 0 || index > 32) {//check if it's within range of the semaphore array
 		return -1;
 	}
 	acquire(&sem[index].lock);
-	sem[index].value = max;
+	sem[index].value = max_val;
 	release(&sem[index].lock);
 	return 0;  
 }
 
-int sem_wait (int index, int count) {
-	if (index < 0 || index > NSEMS) {//check if it's within range of the semaphore array
+int sem_wait (int index, int c) {
+	if (index < 0 || index > 32) {//check if it's within range of the semaphore array
 		return -1;
 	}
 	acquire(&sem[index].lock);
-	while(sem[index].value <= (count-1)){
+	while(sem[index].value <= (c-1)){//semaphore not available (value less than c) 
 		sleep(&sem[index], &sem[index].lock); 
 	}
 	//enters critical section
-	sem[index].value -= count;
+	sem[index].value -= c;
 	release(&sem[index].lock);
 	return 0;
 }
